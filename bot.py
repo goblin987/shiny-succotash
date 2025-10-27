@@ -106,32 +106,26 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await query.edit_message_text("❌ Group not found. Please try again with /start")
             return ConversationHandler.END
         
-        try:
-            # Generate single-use invite link
-            invite_link = await context.bot.create_chat_invite_link(
-                chat_id=group['chat_id'],
-                member_limit=1,
-                expire_date=None
-            )
-            
+        invite_link = group.get('invite_link')
+        
+        if not invite_link:
             await query.message.reply_text(
-                f"✅ Here is your personal invite link to *{group['name']}*:\n\n"
-                f"{invite_link.invite_link}\n\n"
-                f"⚠️ This link is single-use and will expire after you join.",
-                parse_mode='Markdown'
+                f"❌ No invite link configured for {group['name']}.\n\n"
+                "Please contact an administrator."
             )
-            
-            logger.info(f"Generated invite link for user {user.id} to group {group['name']}")
-            
-        except Exception as e:
-            logger.error(f"Error generating invite link for group {group['name']}: {e}")
-            await query.message.reply_text(
-                f"❌ Sorry, I couldn't generate an invite link for {group['name']}.\n\n"
-                "Please make sure:\n"
-                "• The bot is an administrator in the group\n"
-                "• The bot has 'Invite Users' permission\n\n"
-                "Contact an administrator if the problem persists."
-            )
+            return ConversationHandler.END
+        
+        # Send invite link as a button
+        keyboard = [[InlineKeyboardButton(f"🔗 Join {group['name']}", url=invite_link)]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.message.reply_text(
+            f"✅ Click the button below to join *{group['name']}*:",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+        
+        logger.info(f"Sent invite link for user {user.id} to group {group['name']}")
         
         return ConversationHandler.END
     
@@ -187,7 +181,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             text = "📋 *All Groups*\n\n"
             for i, group in enumerate(groups, 1):
                 text += f"{i}. *{group['name']}*\n"
-                text += f"   Chat ID: `{group['chat_id']}`\n"
+                text += f"   Invite Link: `{group.get('invite_link', 'N/A')}`\n"
                 text += f"   ID: `{group['id']}`\n\n"
         
         keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="admin_manage_groups")]]
@@ -255,7 +249,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"⚠️ *Confirm Deletion*\n\n"
             f"Are you sure you want to delete:\n"
             f"*{group['name']}*\n"
-            f"Chat ID: `{group['chat_id']}`\n\n"
+            f"Invite Link: `{group.get('invite_link', 'N/A')}`\n\n"
             f"This action cannot be undone!",
             reply_markup=reply_markup,
             parse_mode='Markdown'
@@ -357,127 +351,78 @@ async def receive_group_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     await update.message.reply_text(
         f"✅ Group name: *{group_name}*\n\n"
-        f"Step 2: Forward a message from the group\n\n"
-        f"📋 Instructions:\n"
-        f"1. Add the bot to your private group\n"
-        f"2. Make the bot an administrator with 'Invite Users' permission\n"
-        f"3. Forward ANY message from that group to me\n\n"
-        f"I'll automatically extract the group's Chat ID!\n\n"
+        f"Step 2: Send the group's invite link\n\n"
+        f"📋 To get the invite link:\n"
+        f"1. Open your private group\n"
+        f"2. Tap the group name → 'Invite to Group via Link'\n"
+        f"3. Copy the invite link (looks like: https://t.me/+xxxxxxxxxxxx)\n"
+        f"4. Send it to me\n\n"
+        f"⚠️ Note: The bot does NOT need to be added to the group!\n\n"
         f"Send /cancel to abort.",
         parse_mode='Markdown'
     )
     
     return ADDING_GROUP_ID
 
-async def receive_group_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Receive forwarded message or chat ID from admin"""
+async def receive_group_invite_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receive invite link from admin"""
     group_name = context.user_data.get('new_group_name', 'Unknown')
-    chat_id = None
     
-    # Check if message is forwarded from a channel/group
-    if update.message.forward_from_chat:
-        chat_id = str(update.message.forward_from_chat.id)
-        chat_title = update.message.forward_from_chat.title
-        
+    if not update.message.text:
         await update.message.reply_text(
-            f"✅ Detected forwarded message from: *{chat_title}*\n"
-            f"Chat ID: `{chat_id}`",
-            parse_mode='Markdown'
-        )
-    
-    # If not forwarded, try to parse as Chat ID text
-    elif update.message.text:
-        chat_id = update.message.text.strip()
-        
-        # Validate chat ID format
-        if not chat_id.startswith('-') or not chat_id[1:].isdigit():
-            await update.message.reply_text(
-                "❌ Please forward a message from the group, or send a valid Chat ID.\n\n"
-                "Chat ID should be a negative number (e.g., -1001234567890)\n\n"
-                "Send /cancel to abort."
-            )
-            return ADDING_GROUP_ID
-    else:
-        await update.message.reply_text(
-            "❌ Please forward a message from the group or send the Chat ID.\n\n"
+            "❌ Please send the group's invite link.\n\n"
             "Send /cancel to abort."
         )
         return ADDING_GROUP_ID
     
-    # Check if group already exists
-    if storage.group_exists(chat_id):
+    invite_link = update.message.text.strip()
+    
+    # Basic validation for Telegram invite links
+    if not (invite_link.startswith('https://t.me/') or invite_link.startswith('http://t.me/')):
         await update.message.reply_text(
-            "❌ A group with this Chat ID already exists.\n\n"
-            "Please check your groups or use a different group."
+            "❌ Invalid invite link format.\n\n"
+            "The link should start with https://t.me/ or http://t.me/\n\n"
+            "Example: https://t.me/+xxxxxxxxxxxx\n\n"
+            "Please try again or send /cancel to abort."
+        )
+        return ADDING_GROUP_ID
+    
+    # Check if group with this link already exists
+    if storage.group_exists(invite_link):
+        await update.message.reply_text(
+            "❌ A group with this invite link already exists.\n\n"
+            "Please check your groups or use a different link."
         )
         context.user_data.pop('new_group_name', None)
         return ConversationHandler.END
     
-    # Try to validate the chat ID by getting chat info
-    try:
-        chat = await context.bot.get_chat(chat_id)
-        
-        # Add the group to storage
-        new_group = storage.add_group(group_name, chat_id)
-        
-        # Show success message with admin menu
-        keyboard = [
-            [InlineKeyboardButton("📝 Edit Welcome Message", callback_data="admin_edit_welcome")],
-            [InlineKeyboardButton("🔗 Manage Groups", callback_data="admin_manage_groups")],
-            [InlineKeyboardButton("❌ Close", callback_data="admin_close")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        groups_count = len(storage.get_groups())
-        
-        await update.message.reply_text(
-            f"✅ *Group added successfully!*\n\n"
-            f"Name: *{new_group['name']}*\n"
-            f"Chat ID: `{new_group['chat_id']}`\n"
-            f"Group Title: _{chat.title}_\n\n"
-            f"⚠️ Make sure the bot is an administrator in this group with 'Invite Users' permission!\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"🔧 *Admin Panel*\n\n"
-            f"Groups configured: {groups_count}\n\n"
-            f"Select an option:",
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-        
-        logger.info(f"Admin {update.effective_user.id} added group {group_name} ({chat_id})")
-        
-    except Exception as e:
-        logger.error(f"Error validating chat ID {chat_id}: {e}")
-        
-        # Still add it to storage
-        new_group = storage.add_group(group_name, chat_id)
-        
-        # Show warning with admin menu
-        keyboard = [
-            [InlineKeyboardButton("📝 Edit Welcome Message", callback_data="admin_edit_welcome")],
-            [InlineKeyboardButton("🔗 Manage Groups", callback_data="admin_manage_groups")],
-            [InlineKeyboardButton("❌ Close", callback_data="admin_close")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        groups_count = len(storage.get_groups())
-        
-        await update.message.reply_text(
-            f"⚠️ *Group added, but validation failed*\n\n"
-            f"Name: *{group_name}*\n"
-            f"Chat ID: `{chat_id}`\n\n"
-            f"Error: {str(e)}\n\n"
-            f"Please ensure:\n"
-            f"• The bot is added to the group\n"
-            f"• The bot is an administrator\n"
-            f"• The Chat ID is correct\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"🔧 *Admin Panel*\n\n"
-            f"Groups configured: {groups_count}\n\n"
-            f"Select an option:",
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
+    # Add the group to storage
+    new_group = storage.add_group(group_name, invite_link)
+    
+    # Show success message with admin menu
+    keyboard = [
+        [InlineKeyboardButton("📝 Edit Welcome Message", callback_data="admin_edit_welcome")],
+        [InlineKeyboardButton("🔗 Manage Groups", callback_data="admin_manage_groups")],
+        [InlineKeyboardButton("❌ Close", callback_data="admin_close")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    groups_count = len(storage.get_groups())
+    
+    await update.message.reply_text(
+        f"✅ *Group added successfully!*\n\n"
+        f"Name: *{new_group['name']}*\n"
+        f"Invite Link: `{new_group['invite_link']}`\n\n"
+        f"Users will receive this link when they click the '{group_name}' button.\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🔧 *Admin Panel*\n\n"
+        f"Groups configured: {groups_count}\n\n"
+        f"Select an option:",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+    
+    logger.info(f"Admin {update.effective_user.id} added group {group_name} with invite link")
     
     context.user_data.pop('new_group_name', None)
     return ConversationHandler.END
@@ -519,7 +464,7 @@ def main() -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_group_name)
             ],
             ADDING_GROUP_ID: [
-                MessageHandler((filters.TEXT | filters.FORWARDED) & ~filters.COMMAND, receive_group_chat_id)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_group_invite_link)
             ],
             CONFIRMING_DELETE: [
                 CallbackQueryHandler(button_callback)

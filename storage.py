@@ -62,14 +62,14 @@ def get_group_by_id(group_id: str) -> Optional[Dict]:
             return group
     return None
 
-def add_group(name: str, chat_id: str) -> Dict:
-    """Add a new group"""
+def add_group(name: str, invite_link: str) -> Dict:
+    """Add a new group with its invite link"""
     config = load_config()
     
     new_group = {
         'id': str(uuid.uuid4()),
         'name': name,
-        'chat_id': chat_id
+        'invite_link': invite_link
     }
     
     config['groups'].append(new_group)
@@ -90,8 +90,8 @@ def delete_group(group_id: str) -> bool:
     config['groups'] = new_groups
     return save_config(config)
 
-def group_exists(chat_id: str) -> bool:
-    """Check if a group with the given chat_id already exists"""
+def group_exists(invite_link: str) -> bool:
+    """Check if a group with the given invite_link already exists"""
     groups = get_groups()
-    return any(g.get('chat_id') == chat_id for g in groups)
+    return any(g.get('invite_link') == invite_link for g in groups)
 

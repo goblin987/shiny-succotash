@@ -25,23 +25,39 @@ ADMIN_IDS = os.getenv('ADMIN_IDS', '').split(',')
 ADMIN_IDS = [admin_id.strip() for admin_id in ADMIN_IDS if admin_id.strip()]
 
 # Conversation states
-EDITING_WELCOME, ADDING_GROUP_NAME, ADDING_GROUP_ID, CONFIRMING_DELETE = range(4)
+EDITING_WELCOME, ADDING_GROUP_NAME, ADDING_GROUP_ID, CONFIRMING_DELETE, UPLOADING_MEDIA = range(5)
 
 def is_admin(user_id: int) -> bool:
     """Check if user is an admin"""
     return str(user_id) in ADMIN_IDS
 
+async def delete_message_after_delay(bot, chat_id: int, message_id: int, delay: int):
+    """Delete a message after a specified delay in seconds"""
+    import asyncio
+    await asyncio.sleep(delay)
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        logger.info(f"Deleted message {message_id} in chat {chat_id} after {delay}s")
+    except Exception as e:
+        logger.error(f"Failed to delete message {message_id}: {e}")
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command - show welcome message and group buttons"""
     user = update.effective_user
     welcome_message = storage.get_welcome_message()
+    welcome_media, media_type = storage.get_welcome_media()
     groups = storage.get_groups()
     
     if not groups:
-        await update.message.reply_text(
-            f"{welcome_message}\n\n"
-            "⚠️ No groups available at the moment. Please check back later."
-        )
+        message_text = f"{welcome_message}\n\n⚠️ No groups available at the moment. Please check back later."
+        
+        if welcome_media and media_type:
+            if media_type == "photo":
+                await update.message.reply_photo(photo=welcome_media, caption=message_text)
+            elif media_type == "video":
+                await update.message.reply_video(video=welcome_media, caption=message_text)
+        else:
+            await update.message.reply_text(message_text)
         return
     
     # Create inline keyboard with group buttons
@@ -54,10 +70,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await update.message.reply_text(
-        welcome_message,
-        reply_markup=reply_markup
-    )
+    # Send with media if available
+    if welcome_media and media_type:
+        if media_type == "photo":
+            await update.message.reply_photo(
+                photo=welcome_media,
+                caption=welcome_message,
+                reply_markup=reply_markup
+            )
+        elif media_type == "video":
+            await update.message.reply_video(
+                video=welcome_media,
+                caption=welcome_message,
+                reply_markup=reply_markup
+            )
+    else:
+        await update.message.reply_text(
+            welcome_message,
+            reply_markup=reply_markup
+        )
     
     logger.info(f"User {user.id} ({user.first_name}) used /start")
 
@@ -72,16 +103,21 @@ async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     
     keyboard = [
         [InlineKeyboardButton("📝 Edit Welcome Message", callback_data="admin_edit_welcome")],
+        [InlineKeyboardButton("🖼️ Upload Welcome Media", callback_data="admin_upload_media")],
+        [InlineKeyboardButton("🗑️ Remove Welcome Media", callback_data="admin_remove_media")],
         [InlineKeyboardButton("🔗 Manage Groups", callback_data="admin_manage_groups")],
         [InlineKeyboardButton("❌ Close", callback_data="admin_close")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     groups_count = len(storage.get_groups())
+    media_file_id, media_type = storage.get_welcome_media()
+    media_status = f"📷 {media_type.capitalize()}" if media_file_id else "❌ No media"
     
     await update.message.reply_text(
         f"🔧 *Admin Panel*\n\n"
-        f"Groups configured: {groups_count}\n\n"
+        f"Groups configured: {groups_count}\n"
+        f"Welcome media: {media_status}\n\n"
         f"Select an option:",
         reply_markup=reply_markup,
         parse_mode='Markdown'
@@ -115,17 +151,22 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return ConversationHandler.END
         
-        # Send invite link as a button
-        keyboard = [[InlineKeyboardButton(f"🔗 Join {group['name']}", url=invite_link)]]
+        # Send invite link as a button (in Lithuanian)
+        keyboard = [[InlineKeyboardButton(f"🔗 Prisijungti į {group['name']}", url=invite_link)]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await query.message.reply_text(
-            f"✅ Click the button below to join *{group['name']}*:",
+        sent_message = await query.message.reply_text(
+            f"✅ Paspauskite mygtuką žemiau, kad prisijungtumėte prie *{group['name']}*:",
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
         
         logger.info(f"Sent invite link for user {user.id} to group {group['name']}")
+        
+        # Schedule message deletion after 2 minutes
+        context.application.create_task(
+            delete_message_after_delay(context.bot, sent_message.chat_id, sent_message.message_id, 120)
+        )
         
         return ConversationHandler.END
     
@@ -144,6 +185,31 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             parse_mode='Markdown'
         )
         return EDITING_WELCOME
+    
+    elif data == "admin_upload_media":
+        media_file_id, media_type = storage.get_welcome_media()
+        current = f"Current: {media_type.capitalize()}" if media_file_id else "No media uploaded"
+        
+        await query.edit_message_text(
+            "🖼️ *Upload Welcome Media*\n\n"
+            f"{current}\n\n"
+            "Send me a photo or video to display above the welcome message.\n\n"
+            "Send /cancel to abort.",
+            parse_mode='Markdown'
+        )
+        return UPLOADING_MEDIA
+    
+    elif data == "admin_remove_media":
+        if storage.remove_welcome_media():
+            await query.edit_message_text(
+                "✅ Welcome media removed successfully!"
+            )
+            logger.info(f"Admin {user.id} removed welcome media")
+        else:
+            await query.edit_message_text(
+                "❌ Error removing media."
+            )
+        return ConversationHandler.END
     
     elif data == "admin_manage_groups":
         keyboard = [
@@ -286,16 +352,21 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif data == "admin_back":
         keyboard = [
             [InlineKeyboardButton("📝 Edit Welcome Message", callback_data="admin_edit_welcome")],
+            [InlineKeyboardButton("🖼️ Upload Welcome Media", callback_data="admin_upload_media")],
+            [InlineKeyboardButton("🗑️ Remove Welcome Media", callback_data="admin_remove_media")],
             [InlineKeyboardButton("🔗 Manage Groups", callback_data="admin_manage_groups")],
             [InlineKeyboardButton("❌ Close", callback_data="admin_close")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         groups_count = len(storage.get_groups())
+        media_file_id, media_type = storage.get_welcome_media()
+        media_status = f"📷 {media_type.capitalize()}" if media_file_id else "❌ No media"
         
         await query.edit_message_text(
             f"🔧 *Admin Panel*\n\n"
-            f"Groups configured: {groups_count}\n\n"
+            f"Groups configured: {groups_count}\n"
+            f"Welcome media: {media_status}\n\n"
             f"Select an option:",
             reply_markup=reply_markup,
             parse_mode='Markdown'
@@ -316,19 +387,24 @@ async def receive_welcome_message(update: Update, context: ContextTypes.DEFAULT_
         # Show success message with admin menu
         keyboard = [
             [InlineKeyboardButton("📝 Edit Welcome Message", callback_data="admin_edit_welcome")],
+            [InlineKeyboardButton("🖼️ Upload Welcome Media", callback_data="admin_upload_media")],
+            [InlineKeyboardButton("🗑️ Remove Welcome Media", callback_data="admin_remove_media")],
             [InlineKeyboardButton("🔗 Manage Groups", callback_data="admin_manage_groups")],
             [InlineKeyboardButton("❌ Close", callback_data="admin_close")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         groups_count = len(storage.get_groups())
+        media_file_id, media_type = storage.get_welcome_media()
+        media_status = f"📷 {media_type.capitalize()}" if media_file_id else "❌ No media"
         
         await update.message.reply_text(
             "✅ *Welcome message updated successfully!*\n\n"
             f"New message:\n_{new_message}_\n\n"
             f"━━━━━━━━━━━━━━━━━━━━\n\n"
             f"🔧 *Admin Panel*\n\n"
-            f"Groups configured: {groups_count}\n\n"
+            f"Groups configured: {groups_count}\n"
+            f"Welcome media: {media_status}\n\n"
             f"Select an option:",
             reply_markup=reply_markup,
             parse_mode='Markdown'
@@ -427,6 +503,56 @@ async def receive_group_invite_link(update: Update, context: ContextTypes.DEFAUL
     context.user_data.pop('new_group_name', None)
     return ConversationHandler.END
 
+async def receive_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Receive photo or video from admin for welcome media"""
+    media_file_id = None
+    media_type = None
+    
+    if update.message.photo:
+        # Get the largest photo
+        media_file_id = update.message.photo[-1].file_id
+        media_type = "photo"
+    elif update.message.video:
+        media_file_id = update.message.video.file_id
+        media_type = "video"
+    else:
+        await update.message.reply_text(
+            "❌ Please send a photo or video.\n\n"
+            "Send /cancel to abort."
+        )
+        return UPLOADING_MEDIA
+    
+    # Save the media
+    if storage.update_welcome_media(media_file_id, media_type):
+        # Show success message with admin menu
+        keyboard = [
+            [InlineKeyboardButton("📝 Edit Welcome Message", callback_data="admin_edit_welcome")],
+            [InlineKeyboardButton("🖼️ Upload Welcome Media", callback_data="admin_upload_media")],
+            [InlineKeyboardButton("🗑️ Remove Welcome Media", callback_data="admin_remove_media")],
+            [InlineKeyboardButton("🔗 Manage Groups", callback_data="admin_manage_groups")],
+            [InlineKeyboardButton("❌ Close", callback_data="admin_close")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        groups_count = len(storage.get_groups())
+        
+        await update.message.reply_text(
+            f"✅ *Welcome {media_type} uploaded successfully!*\n\n"
+            f"This {media_type} will now appear above the welcome message when users use /start.\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🔧 *Admin Panel*\n\n"
+            f"Groups configured: {groups_count}\n"
+            f"Welcome media: 📷 {media_type.capitalize()}\n\n"
+            f"Select an option:",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+        logger.info(f"Admin {update.effective_user.id} uploaded welcome {media_type}")
+    else:
+        await update.message.reply_text("❌ Error uploading media. Please try again.")
+    
+    return ConversationHandler.END
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Cancel the current conversation"""
     await update.message.reply_text(
@@ -459,6 +585,9 @@ def main() -> None:
         states={
             EDITING_WELCOME: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_welcome_message)
+            ],
+            UPLOADING_MEDIA: [
+                MessageHandler((filters.PHOTO | filters.VIDEO) & ~filters.COMMAND, receive_media)
             ],
             ADDING_GROUP_NAME: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_group_name)

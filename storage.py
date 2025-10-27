@@ -12,6 +12,8 @@ os.makedirs(STORAGE_DIR, exist_ok=True)
 
 DEFAULT_CONFIG = {
     "welcome_message": "👋 Welcome to our community portal!\n\nPlease select a group below to get your invite link:",
+    "welcome_media": None,  # Stores file_id of photo or video
+    "welcome_media_type": None,  # "photo" or "video"
     "groups": []
 }
 
@@ -47,6 +49,25 @@ def update_welcome_message(message: str) -> bool:
     """Update the welcome message"""
     config = load_config()
     config['welcome_message'] = message
+    return save_config(config)
+
+def get_welcome_media() -> tuple:
+    """Get the welcome media (file_id, media_type)"""
+    config = load_config()
+    return (config.get('welcome_media'), config.get('welcome_media_type'))
+
+def update_welcome_media(file_id: str, media_type: str) -> bool:
+    """Update the welcome media"""
+    config = load_config()
+    config['welcome_media'] = file_id
+    config['welcome_media_type'] = media_type
+    return save_config(config)
+
+def remove_welcome_media() -> bool:
+    """Remove the welcome media"""
+    config = load_config()
+    config['welcome_media'] = None
+    config['welcome_media_type'] = None
     return save_config(config)
 
 def get_groups() -> List[Dict]:

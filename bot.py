@@ -319,10 +319,24 @@ async def receive_welcome_message(update: Update, context: ContextTypes.DEFAULT_
     new_message = update.message.text
     
     if storage.update_welcome_message(new_message):
+        # Show success message with admin menu
+        keyboard = [
+            [InlineKeyboardButton("📝 Edit Welcome Message", callback_data="admin_edit_welcome")],
+            [InlineKeyboardButton("🔗 Manage Groups", callback_data="admin_manage_groups")],
+            [InlineKeyboardButton("❌ Close", callback_data="admin_close")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        groups_count = len(storage.get_groups())
+        
         await update.message.reply_text(
             "✅ *Welcome message updated successfully!*\n\n"
-            "New message:\n"
-            f"_{new_message}_",
+            f"New message:\n_{new_message}_\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🔧 *Admin Panel*\n\n"
+            f"Groups configured: {groups_count}\n\n"
+            f"Select an option:",
+            reply_markup=reply_markup,
             parse_mode='Markdown'
         )
         logger.info(f"Admin {update.effective_user.id} updated welcome message")
@@ -343,12 +357,12 @@ async def receive_group_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     await update.message.reply_text(
         f"✅ Group name: *{group_name}*\n\n"
-        f"Step 2: Enter the group's Chat ID\n\n"
-        f"To get the Chat ID:\n"
+        f"Step 2: Forward a message from the group\n\n"
+        f"📋 Instructions:\n"
         f"1. Add the bot to your private group\n"
-        f"2. Make the bot an administrator\n"
-        f"3. Forward any message from the group to @userinfobot\n"
-        f"4. Copy the Chat ID (negative number like -1001234567890)\n\n"
+        f"2. Make the bot an administrator with 'Invite Users' permission\n"
+        f"3. Forward ANY message from that group to me\n\n"
+        f"I'll automatically extract the group's Chat ID!\n\n"
         f"Send /cancel to abort.",
         parse_mode='Markdown'
     )
@@ -356,15 +370,37 @@ async def receive_group_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return ADDING_GROUP_ID
 
 async def receive_group_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Receive group chat ID from admin"""
-    chat_id = update.message.text.strip()
+    """Receive forwarded message or chat ID from admin"""
+    group_name = context.user_data.get('new_group_name', 'Unknown')
+    chat_id = None
     
-    # Validate chat ID format
-    if not chat_id.startswith('-') or not chat_id[1:].isdigit():
+    # Check if message is forwarded from a channel/group
+    if update.message.forward_from_chat:
+        chat_id = str(update.message.forward_from_chat.id)
+        chat_title = update.message.forward_from_chat.title
+        
         await update.message.reply_text(
-            "❌ Invalid Chat ID format.\n\n"
-            "Chat ID should be a negative number (e.g., -1001234567890)\n\n"
-            "Please try again or send /cancel to abort."
+            f"✅ Detected forwarded message from: *{chat_title}*\n"
+            f"Chat ID: `{chat_id}`",
+            parse_mode='Markdown'
+        )
+    
+    # If not forwarded, try to parse as Chat ID text
+    elif update.message.text:
+        chat_id = update.message.text.strip()
+        
+        # Validate chat ID format
+        if not chat_id.startswith('-') or not chat_id[1:].isdigit():
+            await update.message.reply_text(
+                "❌ Please forward a message from the group, or send a valid Chat ID.\n\n"
+                "Chat ID should be a negative number (e.g., -1001234567890)\n\n"
+                "Send /cancel to abort."
+            )
+            return ADDING_GROUP_ID
+    else:
+        await update.message.reply_text(
+            "❌ Please forward a message from the group or send the Chat ID.\n\n"
+            "Send /cancel to abort."
         )
         return ADDING_GROUP_ID
     
@@ -372,11 +408,10 @@ async def receive_group_chat_id(update: Update, context: ContextTypes.DEFAULT_TY
     if storage.group_exists(chat_id):
         await update.message.reply_text(
             "❌ A group with this Chat ID already exists.\n\n"
-            "Please check your groups or use a different Chat ID."
+            "Please check your groups or use a different group."
         )
+        context.user_data.pop('new_group_name', None)
         return ConversationHandler.END
-    
-    group_name = context.user_data.get('new_group_name', 'Unknown')
     
     # Try to validate the chat ID by getting chat info
     try:
@@ -385,12 +420,27 @@ async def receive_group_chat_id(update: Update, context: ContextTypes.DEFAULT_TY
         # Add the group to storage
         new_group = storage.add_group(group_name, chat_id)
         
+        # Show success message with admin menu
+        keyboard = [
+            [InlineKeyboardButton("📝 Edit Welcome Message", callback_data="admin_edit_welcome")],
+            [InlineKeyboardButton("🔗 Manage Groups", callback_data="admin_manage_groups")],
+            [InlineKeyboardButton("❌ Close", callback_data="admin_close")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        groups_count = len(storage.get_groups())
+        
         await update.message.reply_text(
             f"✅ *Group added successfully!*\n\n"
             f"Name: *{new_group['name']}*\n"
             f"Chat ID: `{new_group['chat_id']}`\n"
-            f"Actual Group Title: _{chat.title}_\n\n"
-            f"⚠️ Make sure the bot is an administrator in this group with 'Invite Users' permission!",
+            f"Group Title: _{chat.title}_\n\n"
+            f"⚠️ Make sure the bot is an administrator in this group with 'Invite Users' permission!\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🔧 *Admin Panel*\n\n"
+            f"Groups configured: {groups_count}\n\n"
+            f"Select an option:",
+            reply_markup=reply_markup,
             parse_mode='Markdown'
         )
         
@@ -398,6 +448,20 @@ async def receive_group_chat_id(update: Update, context: ContextTypes.DEFAULT_TY
         
     except Exception as e:
         logger.error(f"Error validating chat ID {chat_id}: {e}")
+        
+        # Still add it to storage
+        new_group = storage.add_group(group_name, chat_id)
+        
+        # Show warning with admin menu
+        keyboard = [
+            [InlineKeyboardButton("📝 Edit Welcome Message", callback_data="admin_edit_welcome")],
+            [InlineKeyboardButton("🔗 Manage Groups", callback_data="admin_manage_groups")],
+            [InlineKeyboardButton("❌ Close", callback_data="admin_close")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        groups_count = len(storage.get_groups())
+        
         await update.message.reply_text(
             f"⚠️ *Group added, but validation failed*\n\n"
             f"Name: *{group_name}*\n"
@@ -407,12 +471,13 @@ async def receive_group_chat_id(update: Update, context: ContextTypes.DEFAULT_TY
             f"• The bot is added to the group\n"
             f"• The bot is an administrator\n"
             f"• The Chat ID is correct\n\n"
-            f"You can delete and re-add the group if needed.",
+            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🔧 *Admin Panel*\n\n"
+            f"Groups configured: {groups_count}\n\n"
+            f"Select an option:",
+            reply_markup=reply_markup,
             parse_mode='Markdown'
         )
-        
-        # Still add it to storage
-        storage.add_group(group_name, chat_id)
     
     context.user_data.pop('new_group_name', None)
     return ConversationHandler.END
@@ -454,7 +519,7 @@ def main() -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_group_name)
             ],
             ADDING_GROUP_ID: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_group_chat_id)
+                MessageHandler((filters.TEXT | filters.FORWARDED) & ~filters.COMMAND, receive_group_chat_id)
             ],
             CONFIRMING_DELETE: [
                 CallbackQueryHandler(button_callback)

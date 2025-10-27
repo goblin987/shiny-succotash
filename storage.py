@@ -3,7 +3,12 @@ import os
 import uuid
 from typing import Dict, List, Optional
 
-CONFIG_FILE = 'config.json'
+# Use persistent disk path on Render, fallback to local path for development
+STORAGE_DIR = os.getenv('STORAGE_DIR', '/var/data')
+CONFIG_FILE = os.path.join(STORAGE_DIR, 'config.json')
+
+# Ensure storage directory exists
+os.makedirs(STORAGE_DIR, exist_ok=True)
 
 DEFAULT_CONFIG = {
     "welcome_message": "👋 Welcome to our community portal!\n\nPlease select a group below to get your invite link:",

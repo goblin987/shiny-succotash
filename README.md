@@ -83,7 +83,14 @@ git push -u origin main
      - Example: `123456789,987654321`
      - For single admin: `123456789`
 
-5. **Deploy:**
+5. **Add Persistent Disk (IMPORTANT):**
+   Scroll down to **"Disk"** section and click **"Add Disk"**
+   
+   - **Mount Path**: `/var/data`
+   - This ensures your groups and settings persist across restarts
+   - Without this, all data will be lost when the service restarts!
+
+6. **Deploy:**
    - Click **"Create Background Worker"**
    - Wait for deployment to complete
    - Check logs to verify bot is running
@@ -160,6 +167,10 @@ Bot is running...
 
 The bot stores configuration in `config.json`:
 
+**Storage Location:**
+- **On Render**: `/var/data/config.json` (persistent disk)
+- **Locally**: `/var/data/config.json` (or current directory if `/var/data` doesn't exist)
+
 ```json
 {
   "welcome_message": "Your custom welcome message",
@@ -174,6 +185,8 @@ The bot stores configuration in `config.json`:
 ```
 
 This file is automatically created and managed by the bot. **Do not edit manually** unless necessary.
+
+**Important:** The persistent disk at `/var/data` ensures your configuration survives service restarts on Render.
 
 ## Troubleshooting
 
@@ -299,13 +312,17 @@ pip install -r requirements.txt
 ```powershell
 $env:BOT_TOKEN="your_bot_token"
 $env:ADMIN_IDS="your_user_id"
+$env:STORAGE_DIR="."  # Optional: store config.json in current directory for local testing
 ```
 
 **Linux/Mac:**
 ```bash
 export BOT_TOKEN="your_bot_token"
 export ADMIN_IDS="your_user_id"
+export STORAGE_DIR="."  # Optional: store config.json in current directory for local testing
 ```
+
+**Note:** If `STORAGE_DIR` is not set, it defaults to `/var/data` (you may need to create this directory locally or set it to `.` for current directory).
 
 4. **Run the bot:**
 ```bash

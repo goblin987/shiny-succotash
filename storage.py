@@ -149,20 +149,21 @@ def register_user(user_id: str, referred_by: Optional[str] = None) -> bool:
     if user_id_str in users:
         return False  # User already registered
     
-    # Create new user entry (with has_joined_group=False initially)
+    # Create new user entry (tracking joined groups)
     users[user_id_str] = {
         'referral_count': 0,
         'referred_by': str(referred_by) if referred_by else None,
         'joined_at': datetime.utcnow().isoformat(),
-        'has_joined_group': False  # Track if they've joined any group
+        'has_joined_group': False,  # Track if they've completed joining
+        'groups_joined': []  # Track which groups they've joined
     }
     
-    # Don't increment referral count yet - only when they join a group
+    # Don't increment referral count yet - only when they join all required groups
     
     return save_config(config)
 
-def mark_user_joined_group(user_id: str) -> bool:
-    """Mark that a user has joined a group and increment their referrer's count"""
+def mark_user_joined_group(user_id: str, group_id: str, total_groups: int) -> bool:
+    """Mark that a user has clicked join for a group. Count referral only when all groups joined (if 3+)"""
     config = load_config()
     
     # Ensure referrals structure exists
@@ -181,32 +182,57 @@ def mark_user_joined_group(user_id: str) -> bool:
             'referral_count': 0,
             'referred_by': None,
             'joined_at': datetime.utcnow().isoformat(),
-            'has_joined_group': True
+            'has_joined_group': False,
+            'groups_joined': [group_id]
         }
+    else:
+        # Add group to joined list if not already there
+        groups_joined = users[user_id_str].get('groups_joined', [])
+        if group_id not in groups_joined:
+            groups_joined.append(group_id)
+            users[user_id_str]['groups_joined'] = groups_joined
+    
+    # Check if user has joined enough groups to count as referral
+    groups_joined = users[user_id_str].get('groups_joined', [])
+    
+    # If already counted, don't count again
+    if users[user_id_str].get('has_joined_group', False):
         return save_config(config)
     
-    # If user already joined a group, don't count again
-    if users[user_id_str].get('has_joined_group', False):
-        return False  # Already counted
+    # Determine if referral should be counted
+    should_count = False
+    if total_groups >= 3:
+        # Must join ALL groups if there are 3 or more
+        should_count = len(groups_joined) >= total_groups
+    else:
+        # If less than 3 groups, count after joining first one
+        should_count = len(groups_joined) >= 1
     
-    # Mark user as having joined a group
-    users[user_id_str]['has_joined_group'] = True
+    if should_count:
+        # Mark user as having completed joining
+        users[user_id_str]['has_joined_group'] = True
+        
+        # If this user was referred by someone, NOW increment their referral count
+        referred_by = users[user_id_str].get('referred_by')
+        if referred_by and str(referred_by) in users:
+            users[str(referred_by)]['referral_count'] += 1
+            save_config(config)
+            return True  # Referral was counted
+        elif referred_by:
+            # Create the referrer entry if they don't exist yet
+            from datetime import datetime
+            users[str(referred_by)] = {
+                'referral_count': 1,
+                'referred_by': None,
+                'joined_at': datetime.utcnow().isoformat(),
+                'has_joined_group': False,
+                'groups_joined': []
+            }
+            save_config(config)
+            return True  # Referral was counted
     
-    # If this user was referred by someone, NOW increment their referral count
-    referred_by = users[user_id_str].get('referred_by')
-    if referred_by and str(referred_by) in users:
-        users[str(referred_by)]['referral_count'] += 1
-    elif referred_by:
-        # Create the referrer entry if they don't exist yet
-        from datetime import datetime
-        users[str(referred_by)] = {
-            'referral_count': 1,
-            'referred_by': None,
-            'joined_at': datetime.utcnow().isoformat(),
-            'has_joined_group': False
-        }
-    
-    return save_config(config)
+    save_config(config)
+    return False  # Not yet counted
 
 def get_user_referral_count(user_id: str) -> int:
     """Get the number of users referred by this user"""

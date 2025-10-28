@@ -31,25 +31,31 @@ def is_admin(user_id: int) -> bool:
     """Check if user is an admin"""
     return str(user_id) in ADMIN_IDS
 
-async def delete_message_after_delay(bot, chat_id: int, message_id: int, delay: int):
-    """Delete a message after a specified delay in seconds"""
-    import asyncio
-    await asyncio.sleep(delay)
-    try:
-        await bot.delete_message(chat_id=chat_id, message_id=message_id)
-        logger.info(f"Deleted message {message_id} in chat {chat_id} after {delay}s")
-    except Exception as e:
-        logger.error(f"Failed to delete message {message_id}: {e}")
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command - show welcome message and group buttons"""
     user = update.effective_user
+    
+    # Handle referral deep linking
+    if context.args:
+        ref_param = context.args[0]
+        if ref_param.startswith('ref_'):
+            referrer_id = ref_param.replace('ref_', '')
+            # Register this user with the referrer
+            if referrer_id != str(user.id):  # Can't refer yourself
+                storage.register_user(user.id, referrer_id)
+                logger.info(f"User {user.id} registered via referral from {referrer_id}")
+    
+    # Register user if they're not already registered (without referrer)
+    if not storage.get_referral_data(str(user.id)):
+        storage.register_user(user.id)
+        logger.info(f"User {user.id} registered without referrer")
+    
     welcome_message = storage.get_welcome_message()
     welcome_media, media_type = storage.get_welcome_media()
     groups = storage.get_groups()
     
     if not groups:
-        message_text = f"{welcome_message}\n\n⚠️ No groups available at the moment. Please check back later."
+        message_text = f"{welcome_message}\n\n⚠️ Šiuo metu nėra prieinamų grupių. Prašome pabandyti vėliau."
         
         if welcome_media and media_type:
             if media_type == "photo":
@@ -67,6 +73,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             group['name'],
             callback_data=f"join_{group['id']}"
         )])
+    
+    # Add referral button at the bottom
+    keyboard.append([InlineKeyboardButton(
+        "🔗 Gauti Mano Nuorodą",
+        callback_data="get_referral_link"
+    )])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -92,33 +104,72 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     logger.info(f"User {user.id} ({user.first_name}) used /start")
 
+async def referral_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /referral command - show user's referral link and stats"""
+    user = update.effective_user
+    
+    # Ensure user is registered
+    if not storage.get_referral_data(str(user.id)):
+        storage.register_user(user.id)
+    
+    # Get user's referral count
+    referral_count = storage.get_user_referral_count(str(user.id))
+    
+    # Get bot username for generating the link
+    bot = context.bot
+    bot_username = (await bot.get_me()).username
+    
+    # Generate referral link
+    referral_link = f"https://t.me/{bot_username}?start=ref_{user.id}"
+    
+    # Create message in Lithuanian
+    message = (
+        f"🔗 *Jūsų Referavimo Nuoroda*\n\n"
+        f"`{referral_link}`\n\n"
+        f"📊 *Jūsų Statistika*\n"
+        f"👥 Žmonės, kuriuos pakvietėte: *{referral_count}*\n\n"
+        f"💡 *Kaip tai veikia:*\n"
+        f"• Pasidalinkite šia nuoroda su kitais\n"
+        f"• Kai jie spusteli ir prisijungia prie grupės, jums skaitoma\n"
+        f"• Kiekvienas asmuo skaičiuojamas tik vieną kartą (pirmą grupę)\n\n"
+        f"Pradėkite dalintis, kad padidintumėte savo kvietimų skaičių! 🚀"
+    )
+    
+    await update.message.reply_text(message, parse_mode='Markdown')
+    logger.info(f"User {user.id} checked referral stats (count: {referral_count})")
+
 async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /admin command - show admin panel"""
     user = update.effective_user
     
     if not is_admin(user.id):
-        await update.message.reply_text("❌ Access denied. You are not authorized to use this command.")
+        await update.message.reply_text("❌ Prieiga uždrausta. Neturite leidimo naudoti šią komandą.")
         logger.warning(f"Unauthorized admin access attempt by {user.id} ({user.first_name})")
         return
     
     keyboard = [
-        [InlineKeyboardButton("📝 Edit Welcome Message", callback_data="admin_edit_welcome")],
-        [InlineKeyboardButton("🖼️ Upload Welcome Media", callback_data="admin_upload_media")],
-        [InlineKeyboardButton("🗑️ Remove Welcome Media", callback_data="admin_remove_media")],
-        [InlineKeyboardButton("🔗 Manage Groups", callback_data="admin_manage_groups")],
-        [InlineKeyboardButton("❌ Close", callback_data="admin_close")]
+        [InlineKeyboardButton("📝 Redaguoti Sveikinimo Žinutę", callback_data="admin_edit_welcome")],
+        [InlineKeyboardButton("🖼️ Įkelti Sveikinimo Mediją", callback_data="admin_upload_media")],
+        [InlineKeyboardButton("🗑️ Pašalinti Sveikinimo Mediją", callback_data="admin_remove_media")],
+        [InlineKeyboardButton("🔗 Valdyti Grupes", callback_data="admin_manage_groups")],
+        [InlineKeyboardButton("📊 Referavimo Statistika", callback_data="admin_referral_stats")],
+        [InlineKeyboardButton("❌ Uždaryti", callback_data="admin_close")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     groups_count = len(storage.get_groups())
     media_file_id, media_type = storage.get_welcome_media()
-    media_status = f"📷 {media_type.capitalize()}" if media_file_id else "❌ No media"
+    media_status = f"📷 {media_type.capitalize()}" if media_file_id else "❌ Nėra medijos"
+    total_users = storage.get_total_users()
+    total_referrals = storage.get_total_referrals()
     
     await update.message.reply_text(
-        f"🔧 *Admin Panel*\n\n"
-        f"Groups configured: {groups_count}\n"
-        f"Welcome media: {media_status}\n\n"
-        f"Select an option:",
+        f"🔧 *Administravimo Skydelis*\n\n"
+        f"Sukonfigūruotų grupių: {groups_count}\n"
+        f"Sveikinimo medija: {media_status}\n"
+        f"Viso vartotojų: {total_users}\n"
+        f"Viso referalų: {total_referrals}\n\n"
+        f"Pasirinkite parinktį:",
         reply_markup=reply_markup,
         parse_mode='Markdown'
     )
@@ -133,68 +184,96 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user = query.from_user
     data = query.data
     
+    # Handle referral link button
+    if data == "get_referral_link":
+        # Ensure user is registered
+        if not storage.get_referral_data(str(user.id)):
+            storage.register_user(user.id)
+        
+        # Get user's referral count
+        referral_count = storage.get_user_referral_count(str(user.id))
+        
+        # Get bot username for generating the link
+        bot = context.bot
+        bot_username = (await bot.get_me()).username
+        
+        # Generate referral link
+        referral_link = f"https://t.me/{bot_username}?start=ref_{user.id}"
+        
+        # Create message in Lithuanian
+        message = (
+            f"🔗 *Jūsų Referavimo Nuoroda*\n\n"
+            f"`{referral_link}`\n\n"
+            f"📊 *Jūsų Statistika*\n"
+            f"👥 Žmonės, kuriuos pakvietėte: *{referral_count}*\n\n"
+            f"💡 *Kaip tai veikia:*\n"
+            f"• Pasidalinkite šia nuoroda su kitais\n"
+            f"• Kai jie spusteli ir prisijungia prie grupės, jums skaitoma\n"
+            f"• Kiekvienas asmuo skaičiuojamas tik vieną kartą (pirmą grupę)\n\n"
+            f"Pradėkite dalintis, kad padidintumėte savo kvietimų skaičių! 🚀"
+        )
+        
+        await query.answer()
+        await query.message.reply_text(message, parse_mode='Markdown')
+        logger.info(f"User {user.id} requested referral link from main menu (count: {referral_count})")
+        
+        return ConversationHandler.END
+    
     # Handle user group selection
     if data.startswith("join_"):
         group_id = data.replace("join_", "")
         group = storage.get_group_by_id(group_id)
         
         if not group:
-            await query.edit_message_text("❌ Group not found. Please try again with /start")
+            await query.answer("❌ Grupė nerasta. Prašome bandyti /start iš naujo", show_alert=True)
             return ConversationHandler.END
         
         invite_link = group.get('invite_link')
         
         if not invite_link:
-            await query.message.reply_text(
-                f"❌ No invite link configured for {group['name']}.\n\n"
-                "Please contact an administrator."
+            await query.answer(
+                f"❌ Nėra sukonfigūruotos nuorodos grupei {group['name']}. Susisiekite su administratoriumi.",
+                show_alert=True
             )
             return ConversationHandler.END
         
-        # Send invite link as a button (in Lithuanian)
-        keyboard = [[InlineKeyboardButton(f"🔗 Prisijungti į {group['name']}", url=invite_link)]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        # Mark user as having joined a group (this counts the referral)
+        is_first_join = storage.mark_user_joined_group(user.id)
+        if is_first_join:
+            logger.info(f"User {user.id} joined their first group - referral counted")
         
-        sent_message = await query.message.reply_text(
-            f"✅ Paspauskite mygtuką žemiau, kad prisijungtumėte prie *{group['name']}*:",
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
+        # Open the invite link directly (no extra message needed!)
+        await query.answer(url=invite_link)
         
-        logger.info(f"Sent invite link for user {user.id} to group {group['name']}")
-        
-        # Schedule message deletion after 2 minutes
-        context.application.create_task(
-            delete_message_after_delay(context.bot, sent_message.chat_id, sent_message.message_id, 120)
-        )
+        logger.info(f"Opened invite link for user {user.id} to group {group['name']}")
         
         return ConversationHandler.END
     
     # Admin panel callbacks
     if not is_admin(user.id):
-        await query.edit_message_text("❌ Access denied.")
+        await query.edit_message_text("❌ Prieiga uždrausta.")
         return ConversationHandler.END
     
     if data == "admin_edit_welcome":
         await query.edit_message_text(
-            "📝 *Edit Welcome Message*\n\n"
-            "Send me the new welcome message.\n\n"
-            "Current message:\n"
+            "📝 *Redaguoti Sveikinimo Žinutę*\n\n"
+            "Atsiųskite man naują sveikinimo žinutę.\n\n"
+            "Dabartinė žinutė:\n"
             f"_{storage.get_welcome_message()}_\n\n"
-            "Send /cancel to abort.",
+            "Siųskite /cancel norėdami atšaukti.",
             parse_mode='Markdown'
         )
         return EDITING_WELCOME
     
     elif data == "admin_upload_media":
         media_file_id, media_type = storage.get_welcome_media()
-        current = f"Current: {media_type.capitalize()}" if media_file_id else "No media uploaded"
+        current = f"Dabartinė: {media_type.capitalize()}" if media_file_id else "Medija neįkelta"
         
         await query.edit_message_text(
-            "🖼️ *Upload Welcome Media*\n\n"
+            "🖼️ *Įkelti Sveikinimo Mediją*\n\n"
             f"{current}\n\n"
-            "Send me a photo or video to display above the welcome message.\n\n"
-            "Send /cancel to abort.",
+            "Atsiųskite man nuotrauką arba vaizdo įrašą, kuris bus rodomas virš sveikinimo žinutės.\n\n"
+            "Siųskite /cancel norėdami atšaukti.",
             parse_mode='Markdown'
         )
         return UPLOADING_MEDIA
@@ -202,27 +281,89 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif data == "admin_remove_media":
         if storage.remove_welcome_media():
             await query.edit_message_text(
-                "✅ Welcome media removed successfully!"
+                "✅ Sveikinimo medija sėkmingai pašalinta!"
             )
             logger.info(f"Admin {user.id} removed welcome media")
         else:
             await query.edit_message_text(
-                "❌ Error removing media."
+                "❌ Klaida šalinant mediją."
             )
+        return ConversationHandler.END
+    
+    elif data == "admin_referral_stats":
+        stats = storage.get_all_referral_stats()
+        total_users = storage.get_total_users()
+        users_joined_groups = storage.get_users_who_joined_groups()
+        total_referrals = storage.get_total_referrals()
+        
+        if not stats:
+            text = "📊 *Referavimo Statistika*\n\n" "Dar nėra užregistruotų vartotojų."
+        else:
+            text = f"📊 *Referavimo Statistika*\n\n"
+            text += f"👥 Viso vartotojų: *{total_users}*\n"
+            text += f"✅ Prisijungė prie grupių: *{users_joined_groups}*\n"
+            text += f"🔗 Viso referalų: *{total_referrals}*\n"
+            
+            # Calculate conversion rate (users who actually joined groups)
+            if total_users > 0:
+                conversion_rate = (users_joined_groups / total_users) * 100
+                text += f"📈 Konversijos rodiklis: *{conversion_rate:.1f}%*\n"
+            
+            # Calculate referral rate (of users who joined, how many were referred)
+            if users_joined_groups > 0:
+                referral_rate = (total_referrals / users_joined_groups) * 100
+                text += f"🎯 Referavimo rodiklis: *{referral_rate:.1f}%*\n\n"
+            else:
+                text += "\n"
+            
+            text += "🏆 *Geriausi Referalai:*\n"
+            text += "_(Skaičiuojami tik vartotojai, prisijungę prie grupių)_\n\n"
+            
+            # Show top 10 referrers
+            top_referrers = [s for s in stats if s['referral_count'] > 0][:10]
+            
+            if not top_referrers:
+                text += "Dar nėra referalų.\n"
+            else:
+                for i, stat in enumerate(top_referrers, 1):
+                    user_id = stat['user_id']
+                    count = stat['referral_count']
+                    
+                    # Add medal emojis for top 3
+                    if i == 1:
+                        medal = "🥇"
+                    elif i == 2:
+                        medal = "🥈"
+                    elif i == 3:
+                        medal = "🥉"
+                    else:
+                        medal = f"{i}."
+                    
+                    referral_word = "referalas" if count == 1 else "referalai" if count < 10 else "referalų"
+                    text += f"{medal} Vartotojas `{user_id}`: *{count}* {referral_word}\n"
+        
+        keyboard = [[InlineKeyboardButton("⬅️ Grįžti į Pagrindinį Meniu", callback_data="admin_back")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
         return ConversationHandler.END
     
     elif data == "admin_manage_groups":
         keyboard = [
-            [InlineKeyboardButton("➕ Add New Group", callback_data="admin_add_group")],
-            [InlineKeyboardButton("📋 View All Groups", callback_data="admin_view_groups")],
-            [InlineKeyboardButton("🗑️ Delete Group", callback_data="admin_delete_group")],
-            [InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="admin_back")]
+            [InlineKeyboardButton("➕ Pridėti Naują Grupę", callback_data="admin_add_group")],
+            [InlineKeyboardButton("📋 Peržiūrėti Visas Grupes", callback_data="admin_view_groups")],
+            [InlineKeyboardButton("🗑️ Ištrinti Grupę", callback_data="admin_delete_group")],
+            [InlineKeyboardButton("⬅️ Grįžti į Pagrindinį Meniu", callback_data="admin_back")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(
-            "🔗 *Group Management*\n\n"
-            "Select an option:",
+            "🔗 *Grupių Valdymas*\n\n"
+            "Pasirinkite parinktį:",
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
@@ -355,6 +496,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             [InlineKeyboardButton("🖼️ Upload Welcome Media", callback_data="admin_upload_media")],
             [InlineKeyboardButton("🗑️ Remove Welcome Media", callback_data="admin_remove_media")],
             [InlineKeyboardButton("🔗 Manage Groups", callback_data="admin_manage_groups")],
+            [InlineKeyboardButton("📊 Referral Statistics", callback_data="admin_referral_stats")],
             [InlineKeyboardButton("❌ Close", callback_data="admin_close")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -362,11 +504,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         groups_count = len(storage.get_groups())
         media_file_id, media_type = storage.get_welcome_media()
         media_status = f"📷 {media_type.capitalize()}" if media_file_id else "❌ No media"
+        total_users = storage.get_total_users()
+        total_referrals = storage.get_total_referrals()
         
         await query.edit_message_text(
             f"🔧 *Admin Panel*\n\n"
             f"Groups configured: {groups_count}\n"
-            f"Welcome media: {media_status}\n\n"
+            f"Welcome media: {media_status}\n"
+            f"Total users: {total_users}\n"
+            f"Total referrals: {total_referrals}\n\n"
             f"Select an option:",
             reply_markup=reply_markup,
             parse_mode='Markdown'
@@ -607,6 +753,7 @@ def main() -> None:
     # Register handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin_menu))
+    application.add_handler(CommandHandler("referral", referral_info))
     application.add_handler(conv_handler)
     application.add_handler(CallbackQueryHandler(button_callback))
     

@@ -9,6 +9,7 @@ A powerful Telegram bot with an admin panel for managing multiple private groups
 - **One-Click Access**: Click a button to get your invite link
 - **Secure Links**: Single-use links that expire after joining
 - **Custom Welcome**: Personalized welcome message from admins
+- **Referral System**: Get your unique referral link and track how many people join through you
 
 ### For Admins:
 - **Admin Panel**: Full control via `/admin` command
@@ -16,6 +17,7 @@ A powerful Telegram bot with an admin panel for managing multiple private groups
 - **Multi-Group Management**: Add, view, and delete groups
 - **Button-Based UI**: No complex commands, just click buttons
 - **Secure Authentication**: Only authorized admins can access the panel
+- **Referral Analytics**: Track user referrals and see top referrers
 
 ## Prerequisites
 
@@ -156,12 +158,74 @@ Bot is running...
 /start
 ```
 
-2. **Choose a group:**
-   - Click the button for the group you want to join
+2. **Choose what you want to do:**
+   - Click a group button to join that group (invite opens directly!)
+   - Click **"🔗 Get My Referral Link"** to see your referral link and stats
 
-3. **Join the group:**
-   - Click the invite link provided
+3. **Join a group:**
+   - Accept the invite and you're in!
    - The link works only once for security
+
+4. **Share your referral link:**
+   - Get it from the main menu button or by sending `/referral`
+   - Share your unique link with others
+   - Track how many people join through your link
+   - Check your referral statistics anytime
+
+## Referral System
+
+### How It Works
+
+The bot includes a built-in referral tracking system using Telegram's deep linking feature. Every user automatically gets a unique referral link they can share with others.
+
+### For Community Members
+
+**Get Your Referral Link (Two Ways):**
+
+**Option 1 - Main Menu Button (Easiest):**
+1. Send `/start` to the bot
+2. Click the **"🔗 Get My Referral Link"** button at the bottom
+
+**Option 2 - Command:**
+```
+/referral
+```
+
+Both will display:
+- Your unique referral link (e.g., `https://t.me/YourBot?start=ref_123456789`)
+- Number of people you've referred
+- Simple statistics about your referrals
+
+**Share Your Link:**
+- Send your referral link to friends, post it on social media, or share it in communities
+- When someone clicks your link, starts the bot, **and joins a group**, they count as your referral
+- Each person only counts once (when they join their first group)
+- You can check your stats anytime with `/referral`
+
+### For Admins
+
+**View Referral Statistics:**
+1. Open admin panel: `/admin`
+2. Click "📊 Referral Statistics"
+
+This shows:
+- Total registered users (all who started the bot)
+- Users who joined groups (actually engaged)
+- Total number of referrals (only counts users who joined groups)
+- Conversion rate (percentage of users who joined groups)
+- Referral rate (percentage of joined users who were referred)
+- Top 10 referrers with their user IDs and referral counts
+- Medal emojis (🥇🥈🥉) for the top 3 referrers
+
+### Technical Details
+
+- Uses Telegram deep linking with format: `https://t.me/BotUsername?start=ref_USERID`
+- **Referrals only count when users join a group** (not just starting the bot)
+- Each user counts once (when they join their first group)
+- All referral data is stored persistently in `config.json`
+- Users cannot refer themselves
+- Referral relationships are tracked permanently
+- Statistics update in real-time
 
 ## Configuration
 
@@ -178,13 +242,46 @@ The bot stores configuration in `config.json`:
     {
       "id": "unique-id-here",
       "name": "Group Name",
-      "chat_id": "-1001234567890"
+      "invite_link": "https://t.me/+xxxxxxxxxxxx"
     }
-  ]
+  ],
+  "referrals": {
+    "users": {
+      "123456789": {
+        "referral_count": 5,
+        "referred_by": null,
+        "joined_at": "2025-10-28T12:00:00.000000",
+        "has_joined_group": true
+      },
+      "987654321": {
+        "referral_count": 0,
+        "referred_by": "123456789",
+        "joined_at": "2025-10-28T12:05:00.000000",
+        "has_joined_group": true
+      },
+      "555555555": {
+        "referral_count": 0,
+        "referred_by": "123456789",
+        "joined_at": "2025-10-28T12:10:00.000000",
+        "has_joined_group": false
+      }
+    }
+  }
 }
 ```
 
 This file is automatically created and managed by the bot. **Do not edit manually** unless necessary.
+
+**Field Explanations:**
+- `referral_count`: Number of people this user has successfully referred (who joined groups)
+- `referred_by`: User ID of who referred this user (null if not referred)
+- `joined_at`: When the user first started the bot
+- `has_joined_group`: Whether the user has joined at least one group (referrals only count when true)
+
+In the example above:
+- User 123456789 has referred 5 people who joined groups
+- User 987654321 was referred by user 123456789 and has joined a group (counts as a referral)
+- User 555555555 was referred by user 123456789 but hasn't joined a group yet (doesn't count yet)
 
 **Important:** The persistent disk at `/var/data` ensures your configuration survives service restarts on Render.
 
@@ -420,6 +517,24 @@ If you encounter issues:
 This project is open source and available for community use.
 
 ## Changelog
+
+### Version 2.0.0
+- **NEW: Referral Tracking System**
+  - Automatic referral link generation for all users
+  - User command `/referral` to view stats and get link
+  - **Referrals only count when users actually join a group** (not just starting the bot)
+  - Each user counts once (when they join their first group)
+  - Admin panel with referral statistics and analytics
+  - Conversion tracking (users who started vs users who joined groups)
+  - Top referrers leaderboard with medals
+  - Tracks referral relationships permanently
+  - Deep linking integration using Telegram's start parameters
+- **Improved User Experience**
+  - Group invite links now open directly when clicking a button (no extra message)
+  - Streamlined one-click group joining process
+  - Referral link button added to main menu for easy access
+- Enhanced admin panel with user and referral metrics
+- Persistent referral data storage in config.json
 
 ### Version 1.0.0
 - Initial release

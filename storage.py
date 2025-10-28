@@ -14,7 +14,10 @@ DEFAULT_CONFIG = {
     "welcome_message": "👋 Welcome to our community portal!\n\nPlease select a group below to get your invite link:",
     "welcome_media": None,  # Stores file_id of photo or video
     "welcome_media_type": None,  # "photo" or "video"
-    "groups": []
+    "groups": [],
+    "referrals": {
+        "users": {}  # user_id: {referral_count, referred_by, joined_at}
+    }
 }
 
 def load_config() -> Dict:
@@ -115,4 +118,149 @@ def group_exists(invite_link: str) -> bool:
     """Check if a group with the given invite_link already exists"""
     groups = get_groups()
     return any(g.get('invite_link') == invite_link for g in groups)
+
+# ============================================
+# Referral System Functions
+# ============================================
+
+def get_referral_data(user_id: str) -> Optional[Dict]:
+    """Get referral data for a specific user"""
+    config = load_config()
+    referrals = config.get('referrals', {})
+    users = referrals.get('users', {})
+    return users.get(str(user_id))
+
+def register_user(user_id: str, referred_by: Optional[str] = None) -> bool:
+    """Register a new user or update existing user with referrer info"""
+    from datetime import datetime
+    
+    config = load_config()
+    
+    # Ensure referrals structure exists
+    if 'referrals' not in config:
+        config['referrals'] = {'users': {}}
+    if 'users' not in config['referrals']:
+        config['referrals']['users'] = {}
+    
+    user_id_str = str(user_id)
+    users = config['referrals']['users']
+    
+    # If user already exists, don't override their referrer
+    if user_id_str in users:
+        return False  # User already registered
+    
+    # Create new user entry (with has_joined_group=False initially)
+    users[user_id_str] = {
+        'referral_count': 0,
+        'referred_by': str(referred_by) if referred_by else None,
+        'joined_at': datetime.utcnow().isoformat(),
+        'has_joined_group': False  # Track if they've joined any group
+    }
+    
+    # Don't increment referral count yet - only when they join a group
+    
+    return save_config(config)
+
+def mark_user_joined_group(user_id: str) -> bool:
+    """Mark that a user has joined a group and increment their referrer's count"""
+    config = load_config()
+    
+    # Ensure referrals structure exists
+    if 'referrals' not in config:
+        config['referrals'] = {'users': {}}
+    if 'users' not in config['referrals']:
+        config['referrals']['users'] = {}
+    
+    user_id_str = str(user_id)
+    users = config['referrals']['users']
+    
+    # If user doesn't exist, create them first
+    if user_id_str not in users:
+        from datetime import datetime
+        users[user_id_str] = {
+            'referral_count': 0,
+            'referred_by': None,
+            'joined_at': datetime.utcnow().isoformat(),
+            'has_joined_group': True
+        }
+        return save_config(config)
+    
+    # If user already joined a group, don't count again
+    if users[user_id_str].get('has_joined_group', False):
+        return False  # Already counted
+    
+    # Mark user as having joined a group
+    users[user_id_str]['has_joined_group'] = True
+    
+    # If this user was referred by someone, NOW increment their referral count
+    referred_by = users[user_id_str].get('referred_by')
+    if referred_by and str(referred_by) in users:
+        users[str(referred_by)]['referral_count'] += 1
+    elif referred_by:
+        # Create the referrer entry if they don't exist yet
+        from datetime import datetime
+        users[str(referred_by)] = {
+            'referral_count': 1,
+            'referred_by': None,
+            'joined_at': datetime.utcnow().isoformat(),
+            'has_joined_group': False
+        }
+    
+    return save_config(config)
+
+def get_user_referral_count(user_id: str) -> int:
+    """Get the number of users referred by this user"""
+    data = get_referral_data(user_id)
+    if not data:
+        return 0
+    return data.get('referral_count', 0)
+
+def get_all_referral_stats() -> List[Dict]:
+    """Get all users with their referral stats, sorted by referral count"""
+    config = load_config()
+    referrals = config.get('referrals', {})
+    users = referrals.get('users', {})
+    
+    stats = []
+    for user_id, data in users.items():
+        stats.append({
+            'user_id': user_id,
+            'referral_count': data.get('referral_count', 0),
+            'referred_by': data.get('referred_by'),
+            'joined_at': data.get('joined_at')
+        })
+    
+    # Sort by referral count (highest first)
+    stats.sort(key=lambda x: x['referral_count'], reverse=True)
+    return stats
+
+def get_total_users() -> int:
+    """Get total number of registered users"""
+    config = load_config()
+    referrals = config.get('referrals', {})
+    users = referrals.get('users', {})
+    return len(users)
+
+def get_total_referrals() -> int:
+    """Get total number of successful referrals (users who joined groups)"""
+    config = load_config()
+    referrals = config.get('referrals', {})
+    users = referrals.get('users', {})
+    
+    total = 0
+    for data in users.values():
+        total += data.get('referral_count', 0)
+    return total
+
+def get_users_who_joined_groups() -> int:
+    """Get count of users who have joined at least one group"""
+    config = load_config()
+    referrals = config.get('referrals', {})
+    users = referrals.get('users', {})
+    
+    count = 0
+    for data in users.values():
+        if data.get('has_joined_group', False):
+            count += 1
+    return count
 

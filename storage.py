@@ -200,13 +200,8 @@ def mark_user_joined_group(user_id: str, group_id: str, total_groups: int) -> bo
         return save_config(config)
     
     # Determine if referral should be counted
-    should_count = False
-    if total_groups >= 3:
-        # Must join ALL groups if there are 3 or more
-        should_count = len(groups_joined) >= total_groups
-    else:
-        # If less than 3 groups, count after joining first one
-        should_count = len(groups_joined) >= 1
+    # MUST join ALL groups, regardless of how many there are
+    should_count = len(groups_joined) >= total_groups
     
     if should_count:
         # Mark user as having completed joining

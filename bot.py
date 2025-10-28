@@ -242,10 +242,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if is_first_join:
             logger.info(f"User {user.id} joined their first group - referral counted")
         
-        # Open the invite link directly (no extra message needed!)
-        await query.answer(url=invite_link)
+        # Send invite link with button
+        keyboard = [[InlineKeyboardButton(f"🔗 Prisijungti", url=invite_link)]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
         
-        logger.info(f"Opened invite link for user {user.id} to group {group['name']}")
+        await query.answer()
+        await query.message.reply_text(
+            f"✅ *{group['name']}*",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+        
+        logger.info(f"Sent invite link for user {user.id} to group {group['name']}")
         
         return ConversationHandler.END
     

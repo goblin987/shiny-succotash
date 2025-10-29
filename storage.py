@@ -130,7 +130,7 @@ def get_referral_data(user_id: str) -> Optional[Dict]:
     users = referrals.get('users', {})
     return users.get(str(user_id))
 
-def register_user(user_id: str, referred_by: Optional[str] = None) -> bool:
+def register_user(user_id: str, referred_by: Optional[str] = None, username: Optional[str] = None, first_name: Optional[str] = None) -> bool:
     """Register a new user or update existing user with referrer info"""
     from datetime import datetime
     
@@ -155,7 +155,9 @@ def register_user(user_id: str, referred_by: Optional[str] = None) -> bool:
         'referred_by': str(referred_by) if referred_by else None,
         'joined_at': datetime.utcnow().isoformat(),
         'has_joined_group': False,  # Track if they've completed joining
-        'groups_joined': []  # Track which groups they've joined
+        'groups_joined': [],  # Track which groups they've joined
+        'username': username,  # Store username for display
+        'first_name': first_name  # Store first name as backup
     }
     
     # Don't increment referral count yet - only when they join all required groups
@@ -183,7 +185,9 @@ def mark_user_joined_group(user_id: str, group_id: str, total_groups: int) -> bo
             'referred_by': None,
             'joined_at': datetime.utcnow().isoformat(),
             'has_joined_group': False,
-            'groups_joined': [group_id]
+            'groups_joined': [group_id],
+            'username': None,
+            'first_name': None
         }
     else:
         # Add group to joined list if not already there
@@ -221,7 +225,9 @@ def mark_user_joined_group(user_id: str, group_id: str, total_groups: int) -> bo
                 'referred_by': None,
                 'joined_at': datetime.utcnow().isoformat(),
                 'has_joined_group': False,
-                'groups_joined': []
+                'groups_joined': [],
+                'username': None,
+                'first_name': None
             }
             save_config(config)
             return True  # Referral was counted

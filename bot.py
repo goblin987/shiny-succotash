@@ -42,12 +42,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             referrer_id = ref_param.replace('ref_', '')
             # Register this user with the referrer
             if referrer_id != str(user.id):  # Can't refer yourself
-                storage.register_user(user.id, referrer_id)
+                storage.register_user(user.id, referrer_id, user.username, user.first_name)
                 logger.info(f"User {user.id} registered via referral from {referrer_id}")
     
     # Register user if they're not already registered (without referrer)
     if not storage.get_referral_data(str(user.id)):
-        storage.register_user(user.id)
+        storage.register_user(user.id, None, user.username, user.first_name)
         logger.info(f"User {user.id} registered without referrer")
     
     welcome_message = storage.get_welcome_message()
@@ -110,7 +110,7 @@ async def referral_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     
     # Ensure user is registered
     if not storage.get_referral_data(str(user.id)):
-        storage.register_user(user.id)
+        storage.register_user(user.id, None, user.username, user.first_name)
     
     # Get user's referral count
     referral_count = storage.get_user_referral_count(str(user.id))
@@ -201,7 +201,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if data == "get_referral_link":
         # Ensure user is registered
         if not storage.get_referral_data(str(user.id)):
-            storage.register_user(user.id)
+            storage.register_user(user.id, None, user.username, user.first_name)
         
         # Get user's referral count
         referral_count = storage.get_user_referral_count(str(user.id))
@@ -368,6 +368,20 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     user_id = stat['user_id']
                     count = stat['referral_count']
                     
+                    # Get user display name
+                    user_data = storage.get_referral_data(user_id)
+                    if user_data:
+                        username = user_data.get('username')
+                        first_name = user_data.get('first_name')
+                        if username:
+                            display_name = f"@{username}"
+                        elif first_name:
+                            display_name = first_name
+                        else:
+                            display_name = f"ID: {user_id}"
+                    else:
+                        display_name = f"ID: {user_id}"
+                    
                     # Add medal emojis for top 3
                     if i == 1:
                         medal = "🥇"
@@ -379,7 +393,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                         medal = f"{i}."
                     
                     referral_word = "referalas" if count == 1 else "referalai" if count < 10 else "referalų"
-                    text += f"{medal} Vartotojas `{user_id}`: *{count}* {referral_word}\n"
+                    text += f"{medal} {display_name}: *{count}* {referral_word}\n"
         
         keyboard = [
             [InlineKeyboardButton("🔄 Atstatyti Visus Taškus", callback_data="admin_reset_referrals")],

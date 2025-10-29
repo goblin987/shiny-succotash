@@ -263,12 +263,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return ConversationHandler.END
         
-        # Send invite link with button (referral counted when they click Prisijungti)
+        # Send invite link with URL button that opens directly
         keyboard = [[InlineKeyboardButton(
             f"🔗 Prisijungti", 
-            callback_data=f"actually_join_{group_id}"
+            url=invite_link
         )]]
         reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Count referral when user clicks the group button
+        total_groups = len(storage.get_groups())
+        was_counted = storage.mark_user_joined_group(user.id, group_id, total_groups)
+        
+        if was_counted:
+            logger.info(f"User {user.id} completed all required groups - referral counted!")
         
         await query.answer()
         await query.message.reply_text(
@@ -277,43 +284,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             parse_mode='Markdown'
         )
         
-        logger.info(f"Showed join button for user {user.id} to group {group['name']}")
-        
-        return ConversationHandler.END
-    
-    # Handle actual join button click (this is where referral is counted)
-    if data.startswith("actually_join_"):
-        group_id = data.replace("actually_join_", "")
-        group = storage.get_group_by_id(group_id)
-        
-        if not group:
-            await query.answer("❌ Grupė nerasta", show_alert=True)
-            return ConversationHandler.END
-        
-        invite_link = group.get('invite_link')
-        if not invite_link:
-            await query.answer("❌ Nėra nuorodos", show_alert=True)
-            return ConversationHandler.END
-        
-        # Count referral when user clicks this button
-        total_groups = len(storage.get_groups())
-        was_counted = storage.mark_user_joined_group(user.id, group_id, total_groups)
-        
-        if was_counted:
-            logger.info(f"User {user.id} completed all required groups - referral counted!")
-        
-        # Open the invite link
-        keyboard = [[InlineKeyboardButton(f"🔗 Atidaryti Grupę", url=invite_link)]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await query.answer()
-        await query.edit_message_text(
-            f"✅ *{group['name']}*\n\nSpustelėkite mygtuką žemiau:",
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-        
-        logger.info(f"User {user.id} clicked join for group {group['name']}")
+        logger.info(f"Sent invite link for user {user.id} to group {group['name']}")
         
         return ConversationHandler.END
     

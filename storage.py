@@ -285,3 +285,18 @@ def get_users_who_joined_groups() -> int:
             count += 1
     return count
 
+def reset_all_referral_counts() -> bool:
+    """Reset referral counts for all users to 0 (for new competitions/weeks)"""
+    config = load_config()
+    
+    if 'referrals' not in config or 'users' not in config['referrals']:
+        return True  # Nothing to reset
+    
+    users = config['referrals']['users']
+    
+    # Reset all referral counts to 0
+    for user_data in users.values():
+        user_data['referral_count'] = 0
+    
+    return save_config(config)
+

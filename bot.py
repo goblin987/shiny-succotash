@@ -410,7 +410,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     referral_word = "referalas" if count == 1 else "referalai" if count < 10 else "referalų"
                     text += f"{medal} Vartotojas `{user_id}`: *{count}* {referral_word}\n"
         
-        keyboard = [[InlineKeyboardButton("⬅️ Grįžti į Pagrindinį Meniu", callback_data="admin_back")]]
+        keyboard = [
+            [InlineKeyboardButton("🔄 Atstatyti Visus Taškus", callback_data="admin_reset_referrals")],
+            [InlineKeyboardButton("⬅️ Grįžti į Pagrindinį Meniu", callback_data="admin_back")]
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(
@@ -587,8 +590,48 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         return ConversationHandler.END
     
+    elif data == "admin_reset_referrals":
+        # Show confirmation dialog
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ Taip, Atstatyti", callback_data="confirm_reset_yes"),
+                InlineKeyboardButton("❌ Ne, Atšaukti", callback_data="confirm_reset_no")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            "⚠️ *Patvirtinimas*\n\n"
+            "Ar tikrai norite atstatyti VISŲ vartotojų taškus į 0?\n\n"
+            "Tai naudojama pradedant naują savaitės konkursą.\n\n"
+            "⚠️ Šis veiksmas negrįžtamas!",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+        return ConversationHandler.END
+    
+    elif data == "confirm_reset_yes":
+        # Reset all referral counts
+        if storage.reset_all_referral_counts():
+            await query.edit_message_text(
+                "✅ *Sėkmingai Atstatyta!*\n\n"
+                "Visų vartotojų taškai atstatyti į 0.\n"
+                "Naujas konkursas gali prasidėti! 🎉",
+                parse_mode='Markdown'
+            )
+            logger.info(f"Admin {user.id} reset all referral counts")
+        else:
+            await query.edit_message_text(
+                "❌ Klaida atstačius taškus."
+            )
+        return ConversationHandler.END
+    
+    elif data == "confirm_reset_no":
+        await query.edit_message_text("✅ Atšaukta. Taškai nebuvo pakeisti.")
+        return ConversationHandler.END
+    
     elif data == "admin_close":
-        await query.edit_message_text("✅ Admin panel closed.")
+        await query.edit_message_text("✅ Administravimo skydelis uždarytas.")
         return ConversationHandler.END
     
     return ConversationHandler.END
